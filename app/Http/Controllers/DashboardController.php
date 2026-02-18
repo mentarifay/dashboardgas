@@ -25,7 +25,6 @@ class DashboardController extends Controller
             }
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->tahun_dari) {
             $query->whereYear('bulan_date', '>=', $request->tahun_dari);
         }
@@ -33,7 +32,6 @@ class DashboardController extends Controller
             $query->whereYear('bulan_date', '<=', $request->tahun_sampai);
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->bulan) {
             if (is_array($request->bulan)) {
                 $query->whereIn(DB::raw('MONTH(bulan_date)'), $request->bulan);
@@ -44,7 +42,7 @@ class DashboardController extends Controller
         
         $data = $query->selectRaw('
         shipper, 
-        bulan_date as bulan,
+        bulan_date,
         daily_average_mmscfd,
         DATE_FORMAT(bulan_date, "%Y-%m") as periode
         ')
@@ -58,71 +56,109 @@ class DashboardController extends Controller
                      ->orderBy('shipper')
                      ->pluck('shipper');
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         $tahuns = DB::table('volume_gas')
                    ->where('data', 'PENYALURAN')
                    ->selectRaw('DISTINCT YEAR(bulan_date) as tahun')
                    ->orderBy('tahun', 'desc')
                    ->pluck('tahun');
         
-        $totalVolume = DB::table('volume_gas')->where('data', 'PENYALURAN')->sum('daily_average_mmscfd');
-        $totalRecords = DB::table('volume_gas')->where('data', 'PENYALURAN')->count();
-        $avgVolume = DB::table('volume_gas')->where('data', 'PENYALURAN')->avg('daily_average_mmscfd');
-        
-        $filteredQuery = DB::table('volume_gas')
-                            ->where('data', 'PENYALURAN');
+        // Apply same filters to statistics
+        $statsQuery = DB::table('volume_gas')->where('data', 'PENYALURAN');
         
         if ($request->shipper) {
             if (is_array($request->shipper)) {
-                $filteredQuery->whereIn('shipper', $request->shipper);
+                $statsQuery->whereIn('shipper', $request->shipper);
             } elseif (strpos($request->shipper, ',') !== false) {
                 $shippers = explode(',', $request->shipper);
                 $shippers = array_filter($shippers);
-                $filteredQuery->whereIn('shipper', $shippers);
+                $statsQuery->whereIn('shipper', $shippers);
             } else {
-                $filteredQuery->where('shipper', 'LIKE', '%' . $request->shipper . '%');
+                $statsQuery->where('shipper', 'LIKE', '%' . $request->shipper . '%');
             }
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->tahun_dari) {
-            $filteredQuery->whereYear('bulan_date', '>=', $request->tahun_dari);
+            $statsQuery->whereYear('bulan_date', '>=', $request->tahun_dari);
         }
         if ($request->tahun_sampai) {
-            $filteredQuery->whereYear('bulan_date', '<=', $request->tahun_sampai);
+            $statsQuery->whereYear('bulan_date', '<=', $request->tahun_sampai);
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->bulan) {
             if (is_array($request->bulan)) {
-                $filteredQuery->whereIn(DB::raw('MONTH(bulan_date)'), $request->bulan);
+                $statsQuery->whereIn(DB::raw('MONTH(bulan_date)'), $request->bulan);
             } else {
-                $filteredQuery->whereMonth('bulan_date', $request->bulan);
+                $statsQuery->whereMonth('bulan_date', $request->bulan);
             }
         }
         
-        $volumeTertinggi = (clone $filteredQuery)
-                            ->orderBy('daily_average_mmscfd', 'desc')
-                            ->first();
+        $totalVolume = $statsQuery->sum('daily_average_mmscfd');
+        $totalRecords = $statsQuery->count();
+        $avgVolume = $statsQuery->avg('daily_average_mmscfd');
         
+        // Query baru untuk volume tertinggi
+        $volumeTertinggi = DB::table('volume_gas')
+                            ->where('data', 'PENYALURAN')
+                            ->select('shipper', 'bulan_date', 'daily_average_mmscfd');
+
+        // Apply same filters
+        if ($request->shipper) {
+            if (is_array($request->shipper)) {
+                $volumeTertinggi->whereIn('shipper', $request->shipper);
+            }
+        }
+        if ($request->tahun_dari) {
+            $volumeTertinggi->whereYear('bulan_date', '>=', $request->tahun_dari);
+        }
+        if ($request->tahun_sampai) {
+            $volumeTertinggi->whereYear('bulan_date', '<=', $request->tahun_sampai);
+        }
+        if ($request->bulan) {
+            if (is_array($request->bulan)) {
+                $volumeTertinggi->whereIn(DB::raw('MONTH(bulan_date)'), $request->bulan);
+            }
+        }
+
+        $volumeTertinggi = $volumeTertinggi->orderBy('daily_average_mmscfd', 'desc')->first();
+
         if (!$volumeTertinggi) {
             $volumeTertinggi = (object)[
                 'daily_average_mmscfd' => 0,
                 'shipper' => '-',
-                'bulan' => '-'
+                'bulan_date' => null
             ];
         }
-        
-        $volumeTerendah = (clone $filteredQuery)
+
+        // SAMA BUAT TERENDAH
+        $volumeTerendah = DB::table('volume_gas')
+                            ->where('data', 'PENYALURAN')
                             ->where('daily_average_mmscfd', '>', 0)
-                            ->orderBy('daily_average_mmscfd', 'asc')
-                            ->first();
-        
+                            ->select('shipper', 'bulan_date', 'daily_average_mmscfd');
+
+        if ($request->shipper) {
+            if (is_array($request->shipper)) {
+                $volumeTerendah->whereIn('shipper', $request->shipper);
+            }
+        }
+        if ($request->tahun_dari) {
+            $volumeTerendah->whereYear('bulan_date', '>=', $request->tahun_dari);
+        }
+        if ($request->tahun_sampai) {
+            $volumeTerendah->whereYear('bulan_date', '<=', $request->tahun_sampai);
+        }
+        if ($request->bulan) {
+            if (is_array($request->bulan)) {
+                $volumeTerendah->whereIn(DB::raw('MONTH(bulan_date)'), $request->bulan);
+            }
+        }
+
+        $volumeTerendah = $volumeTerendah->orderBy('daily_average_mmscfd', 'asc')->first();
+
         if (!$volumeTerendah) {
             $volumeTerendah = (object)[
                 'daily_average_mmscfd' => 0,
                 'shipper' => '-',
-                'bulan' => '-'
+                'bulan_date' => null
             ];
         }
         
@@ -144,28 +180,21 @@ class DashboardController extends Controller
                     ->where('data', 'PENYALURAN')
                     ->select(
                         'shipper',
-                        DB::raw('DATE_FORMAT(bulan_date, "%Y-%m-01") as periode'),
-                        DB::raw('YEAR(bulan_date) as tahun'),
-                        DB::raw('MONTH(bulan_date) as bulan_num'),
+                        DB::raw('DATE_FORMAT(bulan_date, "%b-%y") as periode_label'),
+                        DB::raw('DATE_FORMAT(bulan_date, "%Y-%m") as periode_sort'),
                         DB::raw('SUM(daily_average_mmscfd) as total')
                     )
-                    ->groupBy('shipper', 'periode', 'tahun', 'bulan_num');
+                    ->groupBy('shipper', 'periode_label', 'periode_sort');
         
+        // Filters
         if ($request->shipper) {
             if (is_array($request->shipper)) {
                 $query->whereIn('shipper', $request->shipper);
-            } elseif (strpos($request->shipper, ',') !== false) {
-                $shippers = explode(',', $request->shipper);
-                $shippers = array_filter($shippers);
-                if (!empty($shippers)) {
-                    $query->whereIn('shipper', $shippers);
-                }
             } else {
                 $query->where('shipper', $request->shipper);
             }
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->tahun_dari) {
             $query->whereYear('bulan_date', '>=', $request->tahun_dari);
         }
@@ -173,7 +202,6 @@ class DashboardController extends Controller
             $query->whereYear('bulan_date', '<=', $request->tahun_sampai);
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->bulan) {
             if (is_array($request->bulan)) {
                 $query->whereIn(DB::raw('MONTH(bulan_date)'), $request->bulan);
@@ -182,24 +210,25 @@ class DashboardController extends Controller
             }
         }
         
-        $rows = $query->orderBy('tahun')->orderBy('bulan_num')->get();
+        $rows = $query->orderBy('periode_sort')->get();
 
+        // Build labels and series
         $labels = [];
         $seriesMap = [];
 
         foreach ($rows as $row) {
-            $bulanNama = date('M', mktime(0, 0, 0, (int)$row->bulan_num, 1));
-            $label = $bulanNama . '-' . substr((string)$row->tahun, 2);
-
-            if (!in_array($label, $labels)) {
-                $labels[] = $label;
+            if (!in_array($row->periode_label, $labels)) {
+                $labels[] = $row->periode_label;
             }
+            
             if (!isset($seriesMap[$row->shipper])) {
                 $seriesMap[$row->shipper] = [];
             }
-            $seriesMap[$row->shipper][$label] = (float) $row->total;
+            
+            $seriesMap[$row->shipper][$row->periode_label] = (float) $row->total;
         }
 
+        // Convert to ApexCharts format
         $series = [];
         foreach ($seriesMap as $shipper => $dataMap) {
             $values = [];
@@ -237,7 +266,6 @@ class DashboardController extends Controller
             }
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->tahun_dari) {
             $query->whereYear('bulan_date', '>=', $request->tahun_dari);
         }
@@ -245,7 +273,6 @@ class DashboardController extends Controller
             $query->whereYear('bulan_date', '<=', $request->tahun_sampai);
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->bulan) {
             if (is_array($request->bulan)) {
                 $query->whereIn(DB::raw('MONTH(bulan_date)'), $request->bulan);
@@ -273,10 +300,10 @@ class DashboardController extends Controller
                     ->select(
                         DB::raw('YEAR(bulan_date) as tahun'),
                         DB::raw('MONTH(bulan_date) as bulan_num'),
-                        DB::raw('DATE_FORMAT(bulan_date, "%Y-%m") as periode'),
+                        DB::raw('DATE_FORMAT(MAX(bulan_date), "%Y-%m") as periode'),
                         DB::raw('SUM(daily_average_mmscfd) as volume')
                     )
-                    ->groupBy('tahun', 'bulan_num', 'periode')
+                    ->groupBy(DB::raw('YEAR(bulan_date)'), DB::raw('MONTH(bulan_date)'))
                     ->orderBy('tahun')
                     ->orderBy('bulan_num')
                     ->get();
@@ -346,7 +373,6 @@ class DashboardController extends Controller
                     )
                     ->groupBy('shipper', 'periode', 'tahun', 'bulan_num');
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->tahun_dari) {
             $query->whereYear('bulan_date', '>=', $request->tahun_dari);
         }
@@ -394,7 +420,6 @@ class DashboardController extends Controller
             }
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->tahun_dari) {
             $query->whereYear('bulan_date', '>=', $request->tahun_dari);
         }
@@ -402,7 +427,6 @@ class DashboardController extends Controller
             $query->whereYear('bulan_date', '<=', $request->tahun_sampai);
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->bulan) {
             if (is_array($request->bulan)) {
                 $query->whereIn(DB::raw('MONTH(bulan_date)'), $request->bulan);
@@ -467,7 +491,7 @@ class DashboardController extends Controller
             echo '<tr>';
             echo '<td>' . ($index + 1) . '</td>';
             echo '<td>' . htmlspecialchars($item->shipper) . '</td>';
-            echo '<td>' . date('F Y', strtotime($item->bulan)) . '</td>';
+            echo '<td>' . date('F Y', strtotime($item->bulan_date)) . '</td>';
             echo '<td>' . htmlspecialchars($item->periode) . '</td>';
             echo '<td>' . number_format($item->daily_average_mmscfd, 2) . '</td>';
             echo '</tr>';
@@ -501,7 +525,7 @@ class DashboardController extends Controller
             fputcsv($output, [
                 $index + 1,
                 $item->shipper,
-                date('F Y', strtotime($item->bulan)),
+                date('F Y', strtotime($item->bulan_date)),
                 $item->periode,
                 number_format($item->daily_average_mmscfd, 2)
             ]);
@@ -596,7 +620,7 @@ class DashboardController extends Controller
             echo '<tr>';
             echo '<td>' . ($index + 1) . '</td>';
             echo '<td>' . htmlspecialchars($item->shipper) . '</td>';
-            echo '<td>' . date('F Y', strtotime($item->bulan)) . '</td>';
+            echo '<td>' . date('F Y', strtotime($item->bulan_date)) . '</td>';
             echo '<td>' . htmlspecialchars($item->periode) . '</td>';
             echo '<td style="text-align: right;">' . number_format($item->daily_average_mmscfd, 2) . '</td>';
             echo '</tr>';
@@ -665,7 +689,6 @@ class DashboardController extends Controller
             $penyaluranQuery->where('shipper', $request->shipper);
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->tahun_dari) {
             $penerimaanQuery->whereYear('bulan_date', '>=', $request->tahun_dari);
             $penyaluranQuery->whereYear('bulan_date', '>=', $request->tahun_dari);
@@ -755,7 +778,6 @@ class DashboardController extends Controller
             $penyaluranQuery->where('shipper', $request->shipper);
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->tahun_dari) {
             $penerimaanQuery->whereYear('bulan_date', '>=', $request->tahun_dari);
             $penyaluranQuery->whereYear('bulan_date', '>=', $request->tahun_dari);
@@ -802,7 +824,6 @@ class DashboardController extends Controller
             $penyaluranQuery->where('shipper', $request->shipper);
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->tahun_dari) {
             $penerimaanQuery->whereYear('bulan_date', '>=', $request->tahun_dari);
             $penyaluranQuery->whereYear('bulan_date', '>=', $request->tahun_dari);
@@ -874,7 +895,6 @@ class DashboardController extends Controller
             }
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->tahun_dari) {
             $query->whereYear('bulan_date', '>=', $request->tahun_dari);
         }
@@ -882,7 +902,6 @@ class DashboardController extends Controller
             $query->whereYear('bulan_date', '<=', $request->tahun_sampai);
         }
         
-        // ✅ FIXED: Pake bulan_date bukan bulan
         if ($request->bulan) {
             if (is_array($request->bulan)) {
                 $query->whereIn(DB::raw('MONTH(bulan_date)'), $request->bulan);
@@ -893,7 +912,7 @@ class DashboardController extends Controller
         
         return $query->selectRaw('
             shipper, 
-            bulan_date as bulan,
+            bulan_date,
             daily_average_mmscfd,
             DATE_FORMAT(bulan_date, "%Y-%m") as periode
         ')
